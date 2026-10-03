@@ -45,3 +45,7 @@ At the end of the scan it presents **all findings once** (with clear explanation
 3. (Optional but recommended) Allow the script for the current session:
    ```powershell
    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+   Run the script:
+   ```powershell
+   .\ThreatScanner.ps1
