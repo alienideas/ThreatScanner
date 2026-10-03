@@ -30,9 +30,9 @@ function Add-Finding {
         [string]$Name,
         [string]$Details,
         [string]$Reason,
-        [string]$Severity = "Medium",   # Low / Medium / High / Critical
-        [string]$ActionType,            # Process / File / Registry / ScheduledTask / Service / Network
-        [string]$Target,                # PID, full path, registry key, task name, etc.
+        [string]$Severity = "Medium",
+        [string]$ActionType,
+        [string]$Target,
         [hashtable]$Extra = @{}
     )
     $script:Findings += [PSCustomObject]@{
@@ -110,12 +110,10 @@ function Scan-NetworkC2 {
         
         $remote = "$($conn.RemoteAddress):$($conn.RemotePort)"
         
-        # Flag connections from unusual processes or high ports
         $suspiciousProc = $proc.ProcessName -match "powershell|wscript|mshta|rundll32|svchost|explorer"
         $highPort = $conn.RemotePort -gt 10000
         
         if ($suspiciousProc -or $highPort) {
-            # Basic check: avoid flagging common Microsoft / local
             if ($conn.RemoteAddress -notmatch "^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|::1)" -and
                 $conn.RemoteAddress -notlike "*.microsoft.com" -and
                 $conn.RemoteAddress -notlike "*.windows.com") {
@@ -133,7 +131,6 @@ function Scan-NetworkC2 {
 function Scan-Persistence {
     Write-Log "Scanning common persistence locations..."
     
-    # Run keys
     $runKeys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce",
@@ -156,7 +153,6 @@ function Scan-Persistence {
         }
     }
     
-    # Suspicious scheduled tasks
     Get-ScheduledTask | Where-Object { $_.State -ne "Disabled" } | ForEach-Object {
         $actions = $_.Actions.Execute + " " + $_.Actions.Arguments
         if ($actions -match "Temp|AppData\\Local\\Temp|powershell -|mshta|wscript|http") {
@@ -190,7 +186,8 @@ function Remove-SelectedFindings {
         $f = $script:Findings | Where-Object { $_.ID -eq $id }
         if (-not $f) { continue }
         
-        Write-Host "`nRemoving [$id] $($f.Name) ..." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Removing [$id] $($f.Name) ..." -ForegroundColor Yellow
         
         try {
             switch ($f.ActionType) {
@@ -203,7 +200,9 @@ function Remove-SelectedFindings {
                     }
                 }
                 "Registry" {
-                    Remove-ItemProperty -Path ($f.Target -replace '\\[^\\]+$', '') -Name ($f.Target.Split('\')[-1]) -Force -ErrorAction Stop
+                    $regPath = $f.Target.Substring(0, $f.Target.LastIndexOf('\'))
+                    $regName = $f.Target.Split('\')[-1]
+                    Remove-ItemProperty -Path $regPath -Name $regName -Force -ErrorAction Stop
                     Write-Log "Removed registry value $($f.Target)"
                 }
                 "ScheduledTask" {
@@ -211,7 +210,6 @@ function Remove-SelectedFindings {
                     Write-Log "Removed scheduled task $($f.Target)"
                 }
                 "Defender" {
-                    # Defender handles its own quarantine; we just acknowledge
                     Write-Log "Defender threat $($f.Target) - recommend running full Defender scan afterward"
                 }
                 default {
@@ -234,7 +232,8 @@ Write-Host "========================================================" -Foregroun
 Write-Host "  Windows 10/11 Automated Threat Scanner & Remover" -ForegroundColor Cyan
 Write-Host "  Focus: Processes | Network/C2 | Persistence | Fileless" -ForegroundColor Cyan
 Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host "Log file: $LogPath`n"
+Write-Host "Log file: $LogPath"
+Write-Host ""
 
 # Offer restore point
 $createRP = Read-Host "Create a System Restore Point before scanning? (Y/N)"
@@ -247,7 +246,9 @@ if ($createRP -match '^[Yy]') {
     }
 }
 
-Write-Host "`nStarting automated scan... This may take 1-3 minutes.`n" -ForegroundColor Green
+Write-Host ""
+Write-Host "Starting automated scan... This may take 1-3 minutes." -ForegroundColor Green
+Write-Host ""
 
 Scan-SuspiciousProcesses
 Scan-NetworkC2
@@ -257,31 +258,36 @@ Scan-DefenderThreats
 # ==================== RESULTS ====================
 
 if ($script:Findings.Count -eq 0) {
-    Write-Host "`n✅ No suspicious items found matching the detection rules." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "No suspicious items found matching the detection rules." -ForegroundColor Green
     Write-Log "Scan completed - no findings."
     exit 0
 }
 
-Write-Host "`n" + ("=" * 80) -ForegroundColor Yellow
+Write-Host ""
+Write-Host "================================================================================" -ForegroundColor Yellow
 Write-Host " SCAN COMPLETE – $($script:Findings.Count) SUSPICIOUS ITEM(S) FOUND" -ForegroundColor Yellow
-Write-Host ("=" * 80) -ForegroundColor Yellow
+Write-Host "================================================================================" -ForegroundColor Yellow
 
 $script:Findings | Sort-Object Severity -Descending | Format-Table -AutoSize ID, Severity, Category, Name, Details -Wrap
 
-Write-Host "`nDETAILED REASONS:" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "DETAILED REASONS:" -ForegroundColor Cyan
 foreach ($f in ($script:Findings | Sort-Object ID)) {
-    Write-Host "`n[$($f.ID)] $($f.Name)  ($($f.Severity))" -ForegroundColor White
+    Write-Host ""
+    Write-Host "[$($f.ID)] $($f.Name)  ($($f.Severity))" -ForegroundColor White
     Write-Host "    Category : $($f.Category)"
     Write-Host "    Details  : $($f.Details)"
     Write-Host "    Why threat: $($f.Reason)" -ForegroundColor Magenta
 }
 
-Write-Host "`n" + ("=" * 80) -ForegroundColor Yellow
+Write-Host ""
+Write-Host "================================================================================" -ForegroundColor Yellow
 Write-Host "REMOVAL OPTIONS" -ForegroundColor Yellow
 Write-Host "  A  = Remove ALL listed items"
 Write-Host "  N  = Remove NONE (exit)"
 Write-Host "  Or type specific numbers separated by commas / spaces (e.g. 1 3 7  or  1,3,7)"
-Write-Host ("=" * 80) -ForegroundColor Yellow
+Write-Host "================================================================================" -ForegroundColor Yellow
 
 $choice = Read-Host "`nYour choice"
 
@@ -303,12 +309,14 @@ if ($toRemove.Count -eq 0) {
     exit 0
 }
 
-Write-Host "`nYou selected $($toRemove.Count) item(s) for removal. Proceeding..." -ForegroundColor Red
+Write-Host ""
+Write-Host "You selected $($toRemove.Count) item(s) for removal. Proceeding..." -ForegroundColor Red
 Start-Sleep -Seconds 2
 
 Remove-SelectedFindings -IDs $toRemove
 
-Write-Host "`n========================================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "========================================================" -ForegroundColor Green
 Write-Host "  Done. Review the log file for details:" -ForegroundColor Green
 Write-Host "  $LogPath" -ForegroundColor Green
 Write-Host "  Strongly recommended: Run a full Windows Defender Offline scan now." -ForegroundColor Green
